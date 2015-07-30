@@ -27,5 +27,6 @@ Basically,
 
 To start program, type "python main.py"
 
-
+Topic discussion on french forum board:
+http://expresso.cultureforum.net/t10473-rocket-raspberry-tuning-project
 
