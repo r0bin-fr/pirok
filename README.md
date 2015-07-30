@@ -1,6 +1,8 @@
 # pirok
 Control and monitor a Rocket Espresso machine (or else) with your Raspberry Pi
 
+Highly inspired by James Ward's great work: http://int03.co.uk/blog/project-coffee-espiresso-machine/ but written mostly in python language and using a little different hardware 
+
 Hardware requirements: 
 - Espresso machine
 - Raspberry B+
