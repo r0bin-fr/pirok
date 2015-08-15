@@ -3,6 +3,7 @@ import glob
 import time
 import threading
 import readMaxim
+import readMaximSPI
 
 
 class TaskPrintTemp(threading.Thread): 
@@ -18,8 +19,13 @@ class TaskPrintTemp(threading.Thread):
     	print "thread capteur no", self.taskid, "is readry!"
 	while not self._stopevent.isSet(): 
 	#	print "capteur", self.taskid,"temp=",readMaxim.read_temp(self.taskid)
-		#self.mData.setTemp(readMaxim.read_temp(self.taskid))
-		xyz = readMaxim.read_temp(self.taskid)
+
+		#SPI read
+		if(self.taskid == 5):
+			xyz = readMaximSPI.read_temp(self.taskid)
+		#regular read
+		else:
+			xyz = readMaxim.read_temp(self.taskid)
 	
 		if(xyz != None):
 			#avoid glitches
@@ -27,11 +33,7 @@ class TaskPrintTemp(threading.Thread):
 				xyz = (xyz + self.lastTemp)/2
 				self.mData.setTemp(xyz)
 				self.lastTemp = xyz				
-#			#it might be normal if we read it two times?
-#			if (int(xyz) == 0) and (int(self.lastTemp) == 0) :
-#				self.mData.setTemp(xyz)
-#				xyz = (xyz + self.lastTemp)/2
-#				self.mData.setTemp(xyz)				
+		#wait a little
 		self._stopevent.wait(0.2) 
 
     def stop(self): 

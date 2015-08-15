@@ -10,6 +10,7 @@ import mygauge
 import myplot
 import mywatergauge
 import readMaxim
+import readMaximSPI
 import readHSR
 import multithreadTemp
 import multithreadHum
@@ -21,7 +22,7 @@ import sys
 from subprocess import call
 
 #Debug file
-DEBUGFILE = 0
+DEBUGFILE = 1
 #Temperature file backup
 TEMPBACKUP = '/home/pi/pygame/settings'
 
@@ -66,6 +67,7 @@ lasttct = 0
 maximT1 = readMaxim.MaximData(0)
 maximT2 = readMaxim.MaximData(0)
 maximT3 = readMaxim.MaximData(0)
+maximT4SPI = readMaxim.MaximData(0)
 dhtData = readMaxim.MaximData(0)
 hsrData = readHSR.HSRData(0)
 
@@ -75,17 +77,21 @@ task2 = multithreadTemp.TaskPrintTemp(1,maximT2)
 task3 = multithreadTemp.TaskPrintTemp(2,maximT3)
 task4 = multithreadHum.TaskPrintHum(3,dhtData)
 task5 = multithreadRange.TaskPrintRange(4,hsrData)
-#maximT2 is the boiler temp sensor, target = 117C
-temptarget=117
-task6PID = multithreadPID.TaskControlPID(5,maximT2,temptarget)
+task7 = multithreadTemp.TaskPrintTemp(5,maximT4SPI)
+#**** PID setup: *****
+#maximT4SPI is the boiler temp sensor, default target value = 115C
+temptarget=115
+task6PID = multithreadPID.TaskControlPID(6,maximT4SPI,temptarget)
 consigneSpecialePID = 0
 lastTargetTemp = temptarget
+
 
 task1.start()
 task2.start()
 task3.start()
 task4.start()
 task5.start() 
+task7.start()
 task6PID.start()
 
 #how to quit application nicely
@@ -99,6 +105,7 @@ def quitApplicationNicely():
 	task3.stop()
 	task4.stop()
 	task5.stop()
+	task7.stop()
 	task6PID.stop()
 	time.sleep(0.1)
 	pygame.quit()
@@ -112,6 +119,7 @@ def signal_handler(signal, frame):
 #current flow counter (handle deltas)
 deltaFlow = 0
 currentFlow = 0
+realFlVal = 0
 
 #get current flow counter
 def getFlow():
@@ -146,10 +154,12 @@ fontSmall = pygame.font.SysFont('dejavusans', 12, True, False)
 
 def startChrono(ndfl):
 	global currentFlow,deltaFlow
-	global chronoRuning, topdepart, finchrono
+	global chronoRuning, topdepart, finchrono, realFlVal 
+
 	if(chronoRuning == False):
 		chronoRuning = True
 		topdepart = time.time()
+		realFlVal = 0
 		#deltaFlow = ndfl
 		#deltaFlow = currentFlow	
 
@@ -204,7 +214,9 @@ def loadSettings():
 	else:
 		temptarget = val	
 		print "Load settings: temptarget value is now ",temptarget,"C"
-		
+	#apply settings immediately
+	task6PID.setTargetTemp(temptarget)
+	
 
 def saveSettings():
 	#recuperation de la consigne reelle
@@ -232,10 +244,11 @@ def saveSettings():
                 print "Erreur fichier ", TEMPBACKUP," (ouverture, lecture ou fermeture)", sys.exc_info()[0]
 
 #init vars
-FLOWAJUST = 4.2
+FLOWAJUST = 5.0 #4.4115 #4.2
 fl = getFlow() / FLOWAJUST
 deltaFlow = currentFlow
 loadSettings()
+flLastTs = time.time()
 
 # -------- Main Program Loop -----------
 while not done:
@@ -319,33 +332,53 @@ while not done:
     t3 = maximT3.getTemp()
     t4,h4 = dhtData.getTempHum()
     r5 = hsrData.getRange()
+    t6 = maximT4SPI.getTemp()
     oldfl = fl
     fl = getFlow() / FLOWAJUST 
 
-    mygauge.drawGauge("Extra",chr(176), 100,400, t1,-10,100,False,False,PLOT1) 
-    mygauge.drawGauge("Chaudiere", chr(176),250,400, t2,-10,100,False,False,PLOT2) 
-    mygauge.drawGauge("Nez",chr(176),400,400, t3,-10,100,False,False,PLOT3) 
-    mygauge.drawGauge("Hum","%", 550,400, h4,0,100,False,False,WHITE) 
-    mygauge.drawGauge("Flow"," ml",  700,400, fl ,0,60,False,False,WHITE) 
+    mygauge.drawGauge("Groupe E61",chr(176), 100,400, t1,-10,100,False,False,PLOT1) 
+    mygauge.drawGauge("Extra1 - Bas", chr(176),250,400, t2,-10,100,False,False,PLOT2)  
+    buf = "Extra2 - Haut, diff=%0.1f" % (t3-t2) 
+    mygauge.drawGauge(buf,chr(176),400,400, t3,-10,100,False,False,PLOT3) 
+    #mygauge.drawGauge("Hum","%", 550,400, h4,0,100,False,False,WHITE)
+    buf = "Chaudiere (Hum=%d" % h4 
+    buf = buf + "%)"
+    mygauge.drawGauge(buf,chr(176), 550,400, t6,20,150,False,False,WHITE) 
+#    mygauge.drawGauge("Flow"," ml",  700,400, fl ,0,60,False,False,WHITE) 
 
-    #affiche la jauge d'eau
+    #affiche la jauge niveau d'eau
     mywatergauge.drawRGauge(500+10,85,240,24,r5,224.0,50.0)
 
     #gestion du chrono
     if(fl > oldfl):
 	startChrono(oldfl)
-
-    if(fl == oldfl):
+	flLastTs = timestamp
+    #on attend au moins 2 secondes avant d'arreter le chrono (on a des valeurs nulles parfois en pleine extraction)
+    if(fl == oldfl) and ((timestamp - flLastTs) > 2):
 	stopChrono()
     drawChrono()
 
-    #ajoute les valeurs au graphe
+    #adaptation du flowmeter au groupe e61
     tfl=fl-oldfl
     if(tfl < 0):
         tfl=0
-    myplot.addGraphVal(t1,t2,t3,tfl)
+    if(tfl > 0):
+	if(tfl > 1.5):
+		isHighValueFlow = True
+	if(tfl < 1.5) and (isHighValueFlow == True):
+		realFlVal += tfl
+    else:
+	#attende d'au moins 2 secondes avant reset
+	if((timestamp - flLastTs) > 2):
+		isHighValueFlow = False
+    #affichage valeur reele debitmetre
+    buf = "Flow %.1f ml" % fl
+    mygauge.drawGauge(buf," ml",  700,400, realFlVal ,0,60,False,False,WHITE) 
 
-    #affiche le graphique
+
+    #ajoute les valeurs au graphique
+    myplot.addGraphVal(t1,t2,t3,tfl)
+    #genere et affiche les courbes sur le graphique a l'ecran
     myplot.drawGraph(50,25,400,300,85,100)
     
     # --- Go ahead and update the screen with what we've drawn.
@@ -364,7 +397,7 @@ while not done:
     	#add values to our database
     	tct = int(time.time())
 	if( tct != lasttct ):
-    		ligne = "%d:%0.1f:%0.1f:%0.1f:%0.1f:%0.1f\n" % (tct,t1,t2,t3,t4,h4)
+    		ligne = "%d:%0.1f:%0.1f:%0.1f:%0.1f:%0.1f:%0.2f:%0.1f\n" % (tct,t1,t2,t3,t4,h4,tfl,t6)
 		try:	
 			#file to log temperatures
 			tfile = open("/var/tmp/temp.data", "a")
