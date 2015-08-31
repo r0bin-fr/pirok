@@ -4,7 +4,7 @@ import time
 import threading
 import readMaxim
 import readMaximSPI
-
+import math
 
 class TaskPrintTemp(threading.Thread): 
 
@@ -26,13 +26,16 @@ class TaskPrintTemp(threading.Thread):
 		#regular read
 		else:
 			xyz = readMaxim.read_temp(self.taskid)
-	
+
+		#take only valid numbers
 		if(xyz != None):
-			#avoid glitches
-			if(int(xyz) != 0):
-				xyz = (xyz + self.lastTemp)/2
-				self.mData.setTemp(xyz)
-				self.lastTemp = xyz				
+			#cover cases where we get NaN (safety) 
+			if(math.isnan(xyz) == False):
+				#avoid glitches
+				if(int(xyz) != 0):
+					xyz = (xyz + self.lastTemp)/2
+					self.mData.setTemp(xyz)
+					self.lastTemp = xyz				
 		#wait a little
 		self._stopevent.wait(0.2) 
 

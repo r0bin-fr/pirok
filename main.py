@@ -21,8 +21,8 @@ import signal
 import sys
 from subprocess import call
 
-#Debug file
-DEBUGFILE = 1
+#Debug file (user interface will crash after ramfile is full, use with caution)
+DEBUGFILE = 0
 #Temperature file backup
 TEMPBACKUP = '/home/pi/pygame/settings'
 
@@ -79,9 +79,9 @@ task4 = multithreadHum.TaskPrintHum(3,dhtData)
 task5 = multithreadRange.TaskPrintRange(4,hsrData)
 task7 = multithreadTemp.TaskPrintTemp(5,maximT4SPI)
 #**** PID setup: *****
-#maximT4SPI is the boiler temp sensor, default target value = 115C
+#maximT1 is the group temperature (for boost algorithm), maximT4SPI is the boiler temp sensor, default target value = 115C
 temptarget=115
-task6PID = multithreadPID.TaskControlPID(6,maximT4SPI,temptarget)
+task6PID = multithreadPID.TaskControlPID(6,maximT1,maximT4SPI,temptarget)
 consigneSpecialePID = 0
 lastTargetTemp = temptarget
 
@@ -249,6 +249,8 @@ fl = getFlow() / FLOWAJUST
 deltaFlow = currentFlow
 loadSettings()
 flLastTs = time.time()
+cPIDload = 0
+lastPIDload = -1
 
 # -------- Main Program Loop -----------
 while not done:
@@ -299,7 +301,7 @@ while not done:
 			if(consigneSpecialePID == 0):
                                 lastTargetTemp = temptarget
                                 consigneSpecialePID = 1
-			temptarget = 20
+			temptarget = 90
 			task6PID.setTargetTemp(temptarget)
 
     # Clear the screen and set the screen background
@@ -321,7 +323,8 @@ while not done:
     ctext = fontChrono.render(buf, False, WHITE)
     screen.blit(ctext,(650,260))
     #display current PID load
-    buf2 = "  %d" % task6PID.getCurrentDrive()
+    cPIDload = task6PID.getCurrentDrive()
+    buf2 = "  %d" % cPIDload
     buf2 = buf2 + "%"
     stext = fontSmall.render(buf2,False,GREY)
     screen.blit(stext,(650,285))
@@ -397,7 +400,11 @@ while not done:
     	#add values to our database
     	tct = int(time.time())
 	if( tct != lasttct ):
-    		ligne = "%d:%0.1f:%0.1f:%0.1f:%0.1f:%0.1f:%0.2f:%0.1f\n" % (tct,t1,t2,t3,t4,h4,tfl,t6)
+#    		ligne = "%d:%0.1f:%0.1f:%0.1f:%0.1f:%0.1f:%0.2f:%0.1f\n" % (tct,t1,t2,t3,t4,h4,tfl,t6)
+		if(lastPIDload >= 0):
+			cPIDload = (cPIDload + lastPIDload) / 2
+			lastPIDload = -1
+    		ligne = "%d:%0.1f:%0.1f:%0.1f:%0.2f:%0.1f:%d\n" % (tct,t1,t2,t3,tfl,t6,cPIDload)
 		try:	
 			#file to log temperatures
 			tfile = open("/var/tmp/temp.data", "a")
@@ -409,7 +416,8 @@ while not done:
         	except:
         	        print "Erreur fichier ", device_file," (ouverture, lecture ou fermeture)", sys.exc_info()[0]
     		lasttct = tct
-
+	else:
+		lastPIDload = cPIDload
     #only sleep the time we need to respect the clock
     remainingTimeToSleep = time.time() - timestamp
     remainingTimeToSleep = 0.5 - remainingTimeToSleep

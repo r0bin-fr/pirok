@@ -19,6 +19,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+import math
 import os
 import glob
 import time
@@ -46,6 +47,9 @@ sensor = MAX31855.MAX31855(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 def read_temp_raw():
 	try:
 		temp = sensor.readTempC()
+		#cover NaN errors from sensor
+		if(math.isnan(temp)):
+			return "SENSOR ERROR"	
 		buf = "%.1f OK" % temp
         	return buf
 
@@ -57,10 +61,20 @@ def read_temp_raw():
 		return "SPI GENERAL ERROR"
  
 def read_temp(no_capteur):
+	cpt = 0
         lines = read_temp_raw()
+
         while lines.strip()[-2:] != 'OK':
+	    #debug: message d'erreur toutes les 2 secondes maximum
+            if(cpt%10 == 0):
+	    	print "Erreur lecture capteur:",lines
+	    	print sys.exc_info()[0]
             time.sleep(0.2)
             lines = read_temp_raw()
+	    cpt = cpt + 1
+	    if(cpt > 100):
+		cpt = cpt - 100
+
 	position_espace = lines.find(' ')
         if position_espace != -1:
             range_string = lines[0:position_espace]

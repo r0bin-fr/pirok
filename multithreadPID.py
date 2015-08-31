@@ -5,16 +5,24 @@ import threading
 import SSRControl
 import readMaxim
 
+#mode BOOST or not?
+BOILER_BOOST_MODE = 1
+#boiler max temperature for boost mode
+BOILER_MAX_TEMP = 124
+#boiler threshold to stop boost mode
+BOILER_BOOST_GROUP_LIMIT = 84
+
 
 class TaskControlPID(threading.Thread): 
 
     #default target temp is 118C
-    def __init__(self, taskid = 0, maximBoiler = None, tTarget = 118): 
+    def __init__(self, taskid = 0, maximGroupe = None, maximBoiler = None, tTarget = 118): 
         threading.Thread.__init__(self) 
  	self.lok = threading.Lock()
         self.taskid = taskid
         self._stopevent = threading.Event( ) 
         self.maximBoiler = maximBoiler
+	self.maximGroupe = maximGroupe
 	self.currentDrive = 0
 	#init regulator values
 	self.m_timeStep = 1.0
@@ -73,8 +81,24 @@ class TaskControlPID(threading.Thread):
 		if ( latestTemp > 0.5 ):
 			#calculate next time step
 			next += self.m_timeStep
+			#get current target temperature
+			cTargetTemp = self.getTargetTemp()
+
 			#calculate PID update
-			drive = self.pid_update( self.getTargetTemp() - latestTemp, latestTemp )
+			#boost mode only if boiler target temp is higher than 100C (ECO mode is 90)
+			if((BOILER_BOOST_MODE == 1) and (cTargetTemp > 100)):
+				tgroupe = self.maximGroupe.getTemp()
+				#stop the boost mode when group temp is higher than boiler temp - 30C (approximate)
+				bBoostLimit = cTargetTemp - 30
+				#boost boiler target temperature if we are under a certain value
+				if ((tgroupe > 0.5) and (tgroupe < bBoostLimit)):					
+					drive = self.pid_update( BOILER_MAX_TEMP - latestTemp, latestTemp )
+				else:
+					drive = self.pid_update( cTargetTemp - latestTemp, latestTemp )
+			else:
+				drive = self.pid_update( cTargetTemp - latestTemp, latestTemp )
+			#drive = self.pid_update( self.getTargetTemp() - latestTemp, latestTemp )
+				
 		
 		#clamp the output power to sensible range
 		if ( drive > 1.0 ):
