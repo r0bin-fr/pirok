@@ -340,13 +340,11 @@ while not done:
     fl = getFlow() / FLOWAJUST 
 
     mygauge.drawGauge("Groupe E61",chr(176), 100,400, t1,-10,100,False,False,PLOT1) 
-    mygauge.drawGauge("Extra1 - Bas", chr(176),250,400, t2,-10,100,False,False,PLOT2)  
-    buf = "Extra2 - Haut, diff=%0.1f" % (t3-t2) 
-    mygauge.drawGauge(buf,chr(176),400,400, t3,-10,100,False,False,PLOT3) 
-    #mygauge.drawGauge("Hum","%", 550,400, h4,0,100,False,False,WHITE)
-    buf = "Chaudiere (Hum=%d" % h4 
-    buf = buf + "%)"
-    mygauge.drawGauge(buf,chr(176), 550,400, t6,20,150,False,False,WHITE) 
+    mygauge.drawGauge("TuyauHx", chr(176),250,400, (t2+t3)/2,-10,100,False,False,PLOT2)  
+    mygauge.drawGauge("Chaudiere",chr(176),400,400, t6,-10,100,False,False,PLOT3) 
+    buf = "Humidite (Temp=%d" % t4 
+    buf = buf + chr(176) +")"
+    mygauge.drawGauge(buf,chr(176), 550,400, h4,20,150,False,False,WHITE) 
 #    mygauge.drawGauge("Flow"," ml",  700,400, fl ,0,60,False,False,WHITE) 
 
     #affiche la jauge niveau d'eau
@@ -380,7 +378,7 @@ while not done:
 
 
     #ajoute les valeurs au graphique
-    myplot.addGraphVal(t1,t2,t3,tfl)
+    myplot.addGraphVal(t1,(t2+t3)/2,t6,tfl)
     #genere et affiche les courbes sur le graphique a l'ecran
     myplot.drawGraph(50,25,400,300,85,100)
     
