@@ -9,8 +9,8 @@ import random
 NIMBUS_TEXT_MAX_WIDTH	=  41
 
 addrGaugeCtrl = 0x25
-addrGaugeDataCW = [0xC1,0xE1,0xA1,0x81,0x0F]
-addrGaugeDataCCW = [0xD1,0xF1,0xB1,0x91,0x0F]
+addrGaugeDataCW = [0xC0,0xE0,0xA0,0x80,0x0F]
+addrGaugeDataCCW = [0xD0,0xF0,0xB0,0x90,0x0F]
 addrDispCtrl = 	[0x3A,0x3E,0x3C,0x38]
 addrDispData = 	[0x3B,0x3F,0x3D,0x39]
 
@@ -27,7 +27,7 @@ def myi2cWrite(bus,addr,val):
 		return 0
 
 #
-# Send char to i2c bus
+# Send data block to i2c bus 
 #
 def myi2cWriteBlock(bus,addr,addr2,data):
         try:
@@ -36,6 +36,23 @@ def myi2cWriteBlock(bus,addr,addr2,data):
         except:
                 print("i2c error: addr=",hex(addr)," addr2=",hex(addr2)," val=",hex(data[0]))
 		return 0
+
+#
+#send char and retry once
+#
+def myi2cWriteWithRetry(bus,addr,val):
+	written = myi2cWrite(bus,addr,val)
+	if(written == 0):
+		written = myi2cWrite(bus,addr,val)
+
+#
+# Send data block to i2c bus and retry once
+#
+def myi2cWriteBlockWithRetry(bus,addr,addr2,data):
+        written = myi2cWriteBlock(bus,addr,addr2,data)
+        if(written == 0):
+	        written = myi2cWriteBlock(bus,addr,addr2,data)
+
 
 #
 # Print out a 5x7 character of the selected character on the selected display
@@ -85,7 +102,7 @@ def printchar (bus,addrCadran,char,remainingLen):
 # Fills display with spaces with remaining pixels
 #
 def fillDisplay (bus,addrCadran,remainingLen):    
-    print "fillDisplay with ",remainingLen,"chars"
+#    print "fillDisplay with ",remainingLen,"chars"
 
     #print each vertical line of the selected character
     for cpt in range (0, remainingLen):
@@ -204,41 +221,92 @@ fonttable = [
 class NimbusMaster:
         def __init__(self):
 		self.bus = smbus.SMBus(1)
-		
 
+	def nimbus_init(self):
+		#init code (when wifi is off) => doesnt seems to work
+		if(1):
+			for i in range(0,4):
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xE2)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x20)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xC0)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x8D)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xEB)
+				myi2cWriteBlockWithRetry(self.bus,addrDispCtrl[i],0x81,[0x30])
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xB5)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xA1)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x31)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x46)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x2D)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x85)
+				myi2cWriteBlockWithRetry(self.bus,addrDispCtrl[i],0xF2,[0x00])
+				myi2cWriteBlockWithRetry(self.bus,addrDispCtrl[i],0xF3,[0x07])
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x90)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0xAF)
+				myi2cWriteWithRetry(self.bus,addrDispCtrl[i],0x40)
+		#init displays
+		for i in range(0,4):		
+			self.printText(i," ")
+		#init gauges
+		myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCW[4],[0x0,0x0])
+		#wait for gauges
+		time.sleep(1)
+		
+	#print text on the selected display (number 0 to 3)
         def printText(self,numCadran,text):
 		#set the register we want to write to
-		myi2cWrite(self.bus,addrDispCtrl[numCadran],0xB0)
-		myi2cWrite(self.bus,addrDispCtrl[numCadran],0x10)
-		myi2cWrite(self.bus,addrDispCtrl[numCadran],0x0)
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0xB0)
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0x10)
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0x00)
 		#send the string, 41 pixels width max
 		cpt = 0
 		for ch in text:
  			written = printchar (self.bus,addrDispData[numCadran],ch,NIMBUS_TEXT_MAX_WIDTH-cpt)
 			cpt += written		
-		print "written=",cpt
+#		print "written=",cpt
 		#fills up with spaces, if needed
 		if(cpt < NIMBUS_TEXT_MAX_WIDTH):
 			fillDisplay(self.bus,addrDispData[numCadran],NIMBUS_TEXT_MAX_WIDTH-cpt)		
 
+	#print text on the selected display (number 0 to 3) at selected place
+        def printTextAt(self,numCadran,text,xpos):
+		#set the register we want to write to
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0xB0)
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0x10)
+		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],xpos)
+		#send the string, 41 pixels width max
+		cpt = xpos
+		for ch in text:
+ 			written = printchar (self.bus,addrDispData[numCadran],ch,NIMBUS_TEXT_MAX_WIDTH-cpt)
+			cpt += written		
+
+	#set gauge value (0 to 180 = 360degree) on the selected gauge (0 to 3)
 	def setGauge(self,numGauge,val,way):
 		data = [val,0x0]
 		#choose direction to move to: clockwise or counterclockwise
 		if(way == 1):
-			written = myi2cWriteBlock(self.bus,addrGaugeCtrl,addrGaugeDataCW[numGauge],data)
-			if(written == 0):
-				written = myi2cWriteBlock(self.bus,addrGaugeCtrl,addrGaugeDataCW[numGauge],data)
+			myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCW[numGauge],data)
 		else:
-			written = myi2cWriteBlock(self.bus,addrGaugeCtrl,addrGaugeDataCCW[numGauge],data)
-			if(written == 0):
-				written = myi2cWriteBlock(self.bus,addrGaugeCtrl,addrGaugeDataCCW[numGauge],data)
+			myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCCW[numGauge],data)
 
-		 
+
+print("Nimbus master start!!")
 nm = NimbusMaster()
+nm.nimbus_init()
+#failedi = 0
+#for i in range(0,100000):
+#	val=random.randint(0, 9)
+#	ret = myi2cWrite(nm.bus,0x3d,0x0)
+#	if(ret == 0):
+#		failedi += 1
+#print("fail rate=",failedi)
+#
+#exit()
+
+
 nm.printText(0,"Bisous")
 nm.printText(1,"Ma cherie")
 nm.printText(2,"Inna vovo?")
-nm.printText(2,"Masustcha!")
+nm.printText(3,"Masustcha!")
 
 nm.setGauge(0,20,1)
 time.sleep(0.5)
