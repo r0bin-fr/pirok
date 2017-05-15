@@ -9,6 +9,7 @@ import calendar
 import mygauge
 import myplot
 import mywatergauge
+import mynimbus
 import readMaxim
 import readMaximSPI
 import readHSR
@@ -16,6 +17,7 @@ import multithreadTemp
 import multithreadHum
 import multithreadRange
 import multithreadPID
+import multithreadScale
 import SSRControl
 import signal
 import sys
@@ -25,6 +27,9 @@ from subprocess import call
 DEBUGFILE = 0
 #Temperature file backup
 TEMPBACKUP = '/home/pi/pygame/settings'
+
+#enable nimbus or not?
+NIMBUS_ENABLED = 0
 
 # Define some colors
 BLACK    = (   0,   0,   0)
@@ -38,6 +43,7 @@ BLEUINT  = ( 164, 202, 255) #bleu clair
 PLOT1    = ( 124, 181, 236) #bleu pastel
 PLOT2    = ( 144, 237, 125) #vert pastel
 PLOT3    = ( 247, 163,  97) #orange pastel
+GREYL	 = ( 229, 229, 229) #gris clair
 
 #init pygame lib 
 pygame.init() 
@@ -70,14 +76,18 @@ maximT3 = readMaxim.MaximData(0)
 maximT4SPI = readMaxim.MaximData(0)
 dhtData = readMaxim.MaximData(0)
 hsrData = readHSR.HSRData(0)
+scaleData = readMaxim.MaximData(0)
 
+#nimbus for special display
+nimbus = mynimbus.NimbusMaster()
 #launch thread to update the temp values and other (hum, range etc)
 task1 = multithreadTemp.TaskPrintTemp(0,maximT1)
-task2 = multithreadTemp.TaskPrintTemp(1,maximT2)
-task3 = multithreadTemp.TaskPrintTemp(2,maximT3)
+#task2 = multithreadTemp.TaskPrintTemp(1,maximT2)
+#task3 = multithreadTemp.TaskPrintTemp(2,maximT3)
 task4 = multithreadHum.TaskPrintHum(3,dhtData)
 task5 = multithreadRange.TaskPrintRange(4,hsrData)
 task7 = multithreadTemp.TaskPrintTemp(5,maximT4SPI)
+task8 = multithreadScale.TaskPrintScale(7,scaleData)
 #**** PID setup: *****
 #maximT1 is the group temperature (for boost algorithm), maximT4SPI is the boiler temp sensor, default target value = 115C
 temptarget=115
@@ -87,12 +97,13 @@ lastTargetTemp = temptarget
 
 
 task1.start()
-task2.start()
-task3.start()
+#task2.start()
+#task3.start()
 task4.start()
 task5.start() 
 task7.start()
 task6PID.start()
+task8.start()
 
 #how to quit application nicely
 def quitApplicationNicely():
@@ -101,12 +112,13 @@ def quitApplicationNicely():
 	SSRControl.setBoilerPWM(0)
 	saveSettings()
 	task1.stop()
-	task2.stop()
-	task3.stop()
+#	task2.stop()
+#	task3.stop()
 	task4.stop()
 	task5.stop()
 	task7.stop()
 	task6PID.stop()
+	task8.stop()
 	time.sleep(0.1)
 	pygame.quit()
         sys.exit(0)
@@ -120,6 +132,8 @@ def signal_handler(signal, frame):
 deltaFlow = 0
 currentFlow = 0
 realFlVal = 0
+scl = 0
+scloffset = 0
 
 #get current flow counter
 def getFlow():
@@ -155,11 +169,13 @@ fontSmall = pygame.font.SysFont('dejavusans', 12, True, False)
 def startChrono(ndfl):
 	global currentFlow,deltaFlow
 	global chronoRuning, topdepart, finchrono, realFlVal 
+	global scl, scloffset
 
 	if(chronoRuning == False):
 		chronoRuning = True
 		topdepart = time.time()
 		realFlVal = 0
+		scloffset = scl
 		#deltaFlow = ndfl
 		#deltaFlow = currentFlow	
 
@@ -252,6 +268,14 @@ flLastTs = time.time()
 cPIDload = 0
 lastPIDload = -1
 
+#init nimbus
+if( NIMBUS_ENABLED ):
+	nimbus.nimbus_init()
+	nimbus.setGaugeMinMaxVal(0,15,140) #boiler
+	nimbus.setGaugeMinMaxVal(1,15,100)  #group 
+	nimbus.setGaugeMinMaxVal(2,20,60)  #hygro
+	nimbus.setGaugeMinMaxVal(3,0,100)  #water
+
 # -------- Main Program Loop -----------
 while not done:
     #try to respect as much as possible the time slot
@@ -311,6 +335,14 @@ while not done:
     screen.blit(rlogo,(800-rlogo.get_width(), 0))
     screen.blit(rcommande,(600,200))
 
+    #display the current time
+    if(int(time.time())%2 == 0):    
+	    bufTime=time.strftime('%H:%M')
+    else:
+	    bufTime=time.strftime('%H %M')
+    ctext = fontChrono.render(bufTime, False, GREYL)
+    screen.blit(ctext,(675,150))
+
     #add plus/minus buttons
 #    rplus = pygame.Rect(675,200,50,50)
 #    screen.fill(RED,rplus)
@@ -331,20 +363,25 @@ while not done:
 
     #affiche les jauges
     t1 = maximT1.getTemp()
-    t2 = maximT2.getTemp()
-    t3 = maximT3.getTemp()
+#    t2 = maximT2.getTemp()
+#    t3 = maximT3.getTemp()
     t4,h4 = dhtData.getTempHum()
     r5 = hsrData.getRange()
     t6 = maximT4SPI.getTemp()
     oldfl = fl
     fl = getFlow() / FLOWAJUST 
+    scl,isScaleHere = scaleData.getTempHum()
 
     mygauge.drawGauge("Groupe E61",chr(176), 100,400, t1,-10,100,False,False,PLOT1) 
-    mygauge.drawGauge("TuyauHx", chr(176),250,400, (t2+t3)/2,-10,100,False,False,PLOT2)  
+#    mygauge.drawGauge("TuyauHx", chr(176),250,400, (t2+t3)/2,-10,100,False,False,PLOT2)  
+    if(isScaleHere == 1):
+	    mygauge.drawGauge("Poids", "g.",250,400, scl-scloffset ,0,60,False,False,PLOT2)  
+    else:
+	    mygauge.drawGauge("Poids (offline)", "g.",250,400, 99 ,0,60,False,False,PLOT2)  
     mygauge.drawGauge("Chaudiere",chr(176),400,400, t6,-10,100,False,False,PLOT3) 
     buf = "Humidite (Temp=%d" % t4 
-    buf = buf + chr(176) +")"
-    mygauge.drawGauge(buf,chr(176), 550,400, h4,20,150,False,False,WHITE) 
+    buf = buf +chr(176)+")"
+    mygauge.drawGauge(buf,"%", 550,400, h4,20,150,False,False,WHITE) 
 #    mygauge.drawGauge("Flow"," ml",  700,400, fl ,0,60,False,False,WHITE) 
 
     #affiche la jauge niveau d'eau
@@ -378,10 +415,37 @@ while not done:
 
 
     #ajoute les valeurs au graphique
-    myplot.addGraphVal(t1,(t2+t3)/2,t6,tfl)
+#    myplot.addGraphVal(t1,(t2+t3)/2,t6,tfl)
+    myplot.addGraphVal(t1,t1,t6,tfl)
     #genere et affiche les courbes sur le graphique a l'ecran
     myplot.drawGraph(50,25,400,300,85,100)
-    
+
+	
+    #*** NIMBUS CODE HERE ***********************************    
+    if ( NIMBUS_ENABLED ):
+	    #update nimbus display no1 : boiler
+	    buf = "CH%3.1f/%d" % (t6,temptarget)
+	    nimbus.printText(0,buf)
+	    nimbus.setGaugeValue(0,int(t6))
+
+	    #update nimbus display no2 : group
+	    buf = "Group:%3.1f" % (t1)
+	    nimbus.printText(1,buf)
+	    nimbus.setGaugeValue(1,int(t1))
+
+	    #update nimbus display no3 : hygro/temp
+	    buf = "T%2.1f/H%d" % (t4,h4)
+	    buf += "%"
+	    nimbus.printText(2,buf)
+	    nimbus.setGaugeValue(2,int(h4))
+
+	    #update nimbus display no4 : water/time
+	    wpc=mywatergauge.getWaterPercent(r5,224.0,50.0)
+	    buf = bufTime + ("/ %d" % wpc)
+	    buf += "%"
+	    nimbus.printText(3,buf)
+	    nimbus.setGaugeValue(3,int(wpc))
+
     # --- Go ahead and update the screen with what we've drawn.
     pygame.display.flip()
  
