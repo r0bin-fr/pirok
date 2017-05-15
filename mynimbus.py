@@ -44,6 +44,10 @@ def myi2cWriteWithRetry(bus,addr,val):
 	written = myi2cWrite(bus,addr,val)
 	if(written == 0):
 		written = myi2cWrite(bus,addr,val)
+		#print("retry")
+		if(written == 0):
+			return 0
+	return 1
 
 #
 # Send data block to i2c bus and retry once
@@ -52,6 +56,10 @@ def myi2cWriteBlockWithRetry(bus,addr,addr2,data):
         written = myi2cWriteBlock(bus,addr,addr2,data)
         if(written == 0):
 	        written = myi2cWriteBlock(bus,addr,addr2,data)
+		#print("retry")
+		if(written == 0):
+                        return 0
+        return 1
 
 
 #
@@ -79,19 +87,16 @@ def printchar (bus,addrCadran,char,remainingLen):
     #print each vertical line of the selected character 
     for col in range (1, allowedLen+1):
 	line = fonttable[firstcol + col]
-	ret = myi2cWrite(bus, addrCadran,line)	
-	#retry once on errors
+	ret = myi2cWriteWithRetry(bus, addrCadran,line)	
+	#if one retry failed, return to try again
 	if(ret == 0):
-		ret = myi2cWrite(bus, addrCadran,line)
+		return 0
 	#increment counter
 	written += ret	
 
     #add one vartical empty line between chars, if we still have space
     if(written < remainingLen):
-	ret = myi2cWrite(bus, addrCadran,0)
-	#retry once on errors
-	if(ret == 0):
-		ret = myi2cWrite(bus, addrCadran,0)
+	ret = myi2cWriteWithRetry(bus, addrCadran,0)
 	written += ret
 
     #returns the number of pixels width written
@@ -221,6 +226,9 @@ fonttable = [
 class NimbusMaster:
         def __init__(self):
 		self.bus = smbus.SMBus(1)
+		self.currentGVal = [0,0,0,0]
+		self.GValMax = [100,100,100,100]
+		self.GValMin = [0,0,0,0]
 
 	def nimbus_init(self):
 		#init code (when wifi is off) => doesnt seems to work
@@ -249,10 +257,10 @@ class NimbusMaster:
 		#init gauges
 		myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCW[4],[0x0,0x0])
 		#wait for gauges
-		time.sleep(1)
+		time.sleep(2)
 		
 	#print text on the selected display (number 0 to 3)
-        def printText(self,numCadran,text):
+        def subPrintText(self,numCadran,text):
 		#set the register we want to write to
 		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0xB0)
 		myi2cWriteWithRetry(self.bus,addrDispCtrl[numCadran],0x10)
@@ -261,12 +269,23 @@ class NimbusMaster:
 		cpt = 0
 		for ch in text:
  			written = printchar (self.bus,addrDispData[numCadran],ch,NIMBUS_TEXT_MAX_WIDTH-cpt)
+			if(written == 0):
+				return 0
 			cpt += written		
 #		print "written=",cpt
 		#fills up with spaces, if needed
 		if(cpt < NIMBUS_TEXT_MAX_WIDTH):
 			fillDisplay(self.bus,addrDispData[numCadran],NIMBUS_TEXT_MAX_WIDTH-cpt)		
-
+		return 1
+	
+	#print text on the selected display (number 0 to 3), handles 3 complete retry
+        def printText(self,numCadran,text):
+		if(self.subPrintText(numCadran,text) == 0):
+			if(self.subPrintText(numCadran,text) == 0):
+				time.sleep(0.05)
+				if(self.subPrintText(numCadran,text) == 0):
+					print("text retry 3 times!!")
+	
 	#print text on the selected display (number 0 to 3) at selected place
         def printTextAt(self,numCadran,text,xpos):
 		#set the register we want to write to
@@ -279,52 +298,110 @@ class NimbusMaster:
  			written = printchar (self.bus,addrDispData[numCadran],ch,NIMBUS_TEXT_MAX_WIDTH-cpt)
 			cpt += written		
 
-	#set gauge value (0 to 180 = 360degree) on the selected gauge (0 to 3)
-	def setGauge(self,numGauge,val,way):
+	#set gauge mini and maxi
+	def setGaugeMinMaxVal(self,numGauge,minv,maxv):
+		self.GValMax[numGauge] = maxv
+                self.GValMin[numGauge] = minv
+
+        #set gauge value (predefined) on the selected gauge (0 to 3) on selected direction
+        def setGaugeValueAndWay(self,numGauge,val,way):
+		vmin=self.GValMin[numGauge]
+		vmax=self.GValMax[numGauge]
+		if(val < vmin):
+			val = vmin
+		if(val > vmax):
+			val = vmax
+
+		#translate the value into nimbus (270 degree)
+		rawval = ((val-vmin) * 135) / (vmax-vmin)
+		#starts at bottom
+		rawval -= 67
+		#inverse val
+		rawval = -rawval
+		#handle negative angles
+		if(rawval < 0):
+			rawval = 180 + rawval
+
+		#print ("val=",val,"rawval = ",rawval)
+		#set raw data
+		self.setRawGaugeValueAndWay(numGauge,rawval,way)
+
+
+	#set gauge RAW value (0 to 180 = 360degree) on the selected gauge (0 to 3) on selected direction
+	def setRawGaugeValueAndWay(self,numGauge,val,way):
 		data = [val,0x0]
 		#choose direction to move to: clockwise or counterclockwise
 		if(way == 1):
 			myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCW[numGauge],data)
 		else:
 			myi2cWriteBlockWithRetry(self.bus,addrGaugeCtrl,addrGaugeDataCCW[numGauge],data)
+	
+	#set gauge value (predefined) and try to determine the best direction
+	def setGaugeValue(self,numGauge,val):
+		lastv = self.currentGVal[numGauge]
+		#check delta to determine gauge direction
+		delta = val - lastv
+		if(delta < 0):
+			self.setGaugeValueAndWay(numGauge,val,0)
+		else:
+			self.setGaugeValueAndWay(numGauge,val,1)
+		#save new value
+		self.currentGVal[numGauge] = val
 
+	def testfunc(self):
+		print("Nimbus master start!!")
+		nm = NimbusMaster()
+		nm.nimbus_init()
+		nm.setGaugeValue(0,0)
+		time.sleep(0.5)	
+		nm.setGaugeValue(1,0)
+		time.sleep(0.5)
+		nm.setGaugeValue(2,0)
+		time.sleep(0.5)
+		nm.setGaugeValue(3,0)
+		time.sleep(4)
 
-print("Nimbus master start!!")
-nm = NimbusMaster()
-nm.nimbus_init()
+		nm.setGaugeValue(0,40)
+		time.sleep(2)
+		nm.setGaugeValue(0,60)
+		time.sleep(2)
+		nm.setGaugeValue(0,30)
+		time.sleep(2)
+		nm.setGaugeValue(0,0)
+		time.sleep(2)
+		nm.setGaugeValue(0,100)
+
 #failedi = 0
 #for i in range(0,100000):
-#	val=random.randint(0, 9)
+##	val=random.randint(0, 9)
 #	ret = myi2cWrite(nm.bus,0x3d,0x0)
 #	if(ret == 0):
 #		failedi += 1
 #print("fail rate=",failedi)
-#
 #exit()
 
+		nm.printText(0,"Bisous")
+		nm.printText(1,"Ma cherie")
+		nm.printText(2,"Inna vovo?")
+		nm.printText(3,"Masustcha!")
 
-nm.printText(0,"Bisous")
-nm.printText(1,"Ma cherie")
-nm.printText(2,"Inna vovo?")
-nm.printText(3,"Masustcha!")
+		nm.setGaugeValue(0,25)
+		time.sleep(0.5)
+		nm.setGaugeValue(1,50)
+		time.sleep(0.5)
+		nm.setGaugeValue(2,75)
+		time.sleep(0.5)
+		nm.setGaugeValue(3,100)
 
-nm.setGauge(0,20,1)
-time.sleep(0.5)
-nm.setGauge(1,40,1)
-time.sleep(0.5)
-nm.setGauge(2,60,1)
-time.sleep(0.5)
-nm.setGauge(3,90,1)
+		time.sleep(3)
 
-time.sleep(3)
-
-nm.setGauge(0,0,0)
-time.sleep(0.5)
-nm.setGauge(1,0,0)
-time.sleep(0.5)
-nm.setGauge(2,0,0)
-time.sleep(0.5)
-nm.setGauge(3,0,0)
+		nm.setGaugeValue(0,0)
+		time.sleep(0.5)
+		nm.setGaugeValue(1,0)
+		time.sleep(0.5)
+		nm.setGaugeValue(2,0)
+		time.sleep(0.5)
+		nm.setGaugeValue(3,0)
 
 
 
