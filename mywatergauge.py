@@ -17,6 +17,17 @@ PLOT1	 = ( 124, 181, 236) #bleu pastel
 PLOT2 	 = ( 144, 237, 125) #vert pastel
 PLOT3	 = ( 247, 163,  97) #orange pastel 
 
+#fonction qui retourne le pourentage d'eau actuel
+def getWaterPercent(range, rmin, rmax):
+	if(range > rmin):
+                range = rmin
+        if(range < rmax):
+                range = rmax
+
+        rpercent = 1.0 - ((range - rmax) / (rmin-rmax))
+	return rpercent*100
+
+
 #fonction qui affiche la jauge du niveau d'eau
 def drawRGauge(x,y,haut,larg,range, rmin, rmax):
 	screen = pygame.display.get_surface()
