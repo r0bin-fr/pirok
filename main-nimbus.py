@@ -268,7 +268,7 @@ lastPIDload = -1
 #init nimbus
 nimbus.nimbus_init()
 nimbus.setGaugeMinMaxVal(0,15,140) #boiler
-nimbus.setGaugeMinMaxVal(1,0,100)  #group 
+nimbus.setGaugeMinMaxVal(1,15,100)  #group 
 nimbus.setGaugeMinMaxVal(2,20,60)  #hygro
 nimbus.setGaugeMinMaxVal(3,0,100)  #water
 
